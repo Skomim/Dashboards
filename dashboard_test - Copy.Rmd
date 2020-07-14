@@ -1,0 +1,279 @@
+---
+title: "Chippewa County COVID-19 dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows          
+    vertical_layout: scroll
+
+# change orientation between rows and columns or leave it blank
+# resources: https://rmarkdown.rstudio.com/flexdashboard/
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(lubridate)
+library(timetk)
+library(dplyr)
+library(roll)   # For rolling average with roll_mean()
+library(ggthemes)
+library(pracma)     # for moving average or upload moving average from parent folder.
+library(ggplot2)
+library(zoo)        # for rolling sum 
+library(gganimate)
+library(emmeans)
+library(plotly)
+library(dimple)
+library(DT)
+
+
+#https://p8105.com/plotly_and_dashboards.html#ggplotly
+
+datachip<-read.csv("C:/COVID-19/Chip_valley/Chippewa County/Chippewa_modeling/COVID-19_chip.csv",header=T, na.strings=c(""," ","NA","  "), stringsAsFactors=F )
+
+data1<- datachip %>% 
+  separate(LoadDttm,c("Date", "Time"), sep=" ",remove = F, extra="drop") %>% 
+  mutate(s_date=format(ymd(Date),"%m/%d")) %>% 
+  separate(s_date,c("MONTH", "DAY"), sep="/",remove = F, extra="drop") %>% 
+  mutate(POS_NEW=ifelse(POS_NEW==-1,0,.$POS_NEW)) %>%
+  mutate(POS_PERC=POS_NEW/TEST_NEW) %>% 
+  mutate(POS_PERC=round(POS_PERC,3)) %>% 
+  filter(!is.na(POS_NEW), POS_NEW>=0, TEST_NEW>=0) %>% 
+  mutate(POS_PERC_MEAN=movavg(POS_PERC,7, "s")) %>%       # Another way to compute moving average is to use function roll_mean instead of movavg()
+  mutate(POS_PERC_MEAN1=movavg(POS_PERC,7, "e")) %>% 
+  mutate(POS_NEW_MEAN=round(movavg(POS_NEW,7,"s"),0)) %>%   # Round the average to avoid dealing with decimal cases :)
+  mutate(POS_PERC_MEAN2=movavg(POS_PERC,14, "s")) %>% 
+  mutate(CUMUL=cumsum(POS_NEW)) %>% 
+  mutate(MONTH=as.numeric(MONTH)) %>% 
+  mutate(POS_MSUM0=rollsum(POS_NEW,7,fill=NA, align = "right")) %>% 
+  mutate(POS_MSUM=rollsum(POS_NEW,14,fill=NA, align = "right")) %>%
+  mutate(POS_MSUM_CODE=ifelse(POS_MSUM<=20, "Low",
+                              ifelse(POS_MSUM>20 & POS_MSUM<=35, "Moderate",
+                                     ifelse(POS_MSUM>35,"High",NA)))) %>% 
+  mutate(BURD=(POS_MSUM*100000)/64658) %>% 
+  mutate(BURD_CODE=ifelse(BURD<10,"Low",
+                          ifelse(BURD>=10 & BURD<50, "Moderate",
+                                 ifelse(BURD>=50&BURD<100,"Moderately high",
+                                        ifelse(BURD>=100,"High",NA))))) %>% 
+  # let try trajectory using log transformation 
+  mutate(POS_MSUM0_NEW=log(POS_MSUM0, base=2)) %>% 
+  mutate(POS_MSUM_NEW=log(POS_MSUM, base=2)) %>%
+  mutate(CUMUL_NEW=log(CUMUL, base=2))
+
+
+f <- list(
+  family = "Source Sans Pro",  #family = "Courier New, monospace",
+  size = 18,
+  color = "#7f7f7f")
+```
+
+Cumulative cases
+===============================================================================================================================
+
+
+Row
+---------------------------------------------------------------------------------------------------------------------
+
+### Cumulative cases
+
+```{r}
+
+Cases<-plot_ly(data1, x= ~s_date, y=~CUMUL, color= ~as.factor(MONTH), type="bar") %>% 
+  layout(title = "COVID-19 cumulative case count in Chippewa County",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+Cases
+
+# Cases<-plot_ly(data1, x= ~s_date, y=~CUMUL, color= ~MONTH, type="bar")
+
+```
+
+
+Row
+------------------------------------------------------------------------------------------------------------------
+### Testing
+
+```{r}
+Testing<-plot_ly(data1, x= ~s_date, y=~TEST_NEW, type="bar") %>% 
+  layout(title = "Daily COVID-19 testing in Chippewa County",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+Testing
+
+
+```
+
+
+
+
+
+Positivity percent visualization
+===========================================================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Monthly COVID-19 positivity percent statistics from March 2019.
+
+```{r}
+Avg<-data1 %>% 
+  group_by(MONTH) %>% 
+  filter(!is.na(POS_PERC)) %>% 
+  summarize(Average=mean(POS_PERC), SEM=sd(POS_PERC), Minimum=min(POS_PERC), Maximum=max(POS_PERC), Total_test=sum(TEST_NEW), Deaths=sum(DEATHS)) %>% 
+  mutate(Average=scales::percent(Average),SEM=scales::percent(SEM),Minimum=scales::percent(Minimum),Maximum=scales::percent(Maximum)) %>% 
+  ungroup()
+
+DT::datatable(Avg, options = list(
+  bPaginate = FALSE
+))
+```
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Month of April positivity percent
+
+```{r}
+Apr<-ggplot(filter(data1, MONTH==04), aes(x=s_date, y=POS_PERC_MEAN2))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-moving average of positivity percent")
+
+ggplotly(Apr)
+```
+
+
+
+### Month of May Positivity percent
+
+
+```{r}
+May<-ggplot(filter(data1, MONTH==05), aes(x=s_date, y=POS_PERC_MEAN2))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-moving average of positivity percent")
+
+ggplotly(May)
+```
+
+
+
+### Month of June positvity percent
+
+```{r}
+Jun<-ggplot(filter(data1, MONTH==06), aes(x=s_date, y=POS_PERC_MEAN2))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-moving average of positivity percent")
+
+ggplotly(Jun)
+```
+
+### Month of July positvity percent
+
+```{r}
+Jul<-ggplot(filter(data1, MONTH==07), aes(x=s_date, y=POS_PERC_MEAN2))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-moving average of positivity percent")
+
+ggplotly(Jul)
+```
+
+
+Other epidemiologic curves
+===========================================================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### 14-daily cumulative count
+
+```{r}
+group.colors2 <- c("Low" = "#01796F", "Moderate" = "#FFD300",  "High"="#D30000")
+
+June_rs<-plot_ly(data1, x= ~s_date, y=~POS_MSUM, color= ~POS_MSUM_CODE, type="bar") %>% 
+  layout(title = "14-day cumulative case count",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+June_rs
+```
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Daily cumulative index of COVID-19
+
+```{r}
+
+
+DCI_06<-plot_ly(data1, x= ~s_date, y=~(POS_MSUM/14), color= ~POS_MSUM_CODE, type="bar") %>% 
+  layout(title = "COVID-19 Daily cumulative index", xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+DCI_06
+
+```
+
+
+
+### Burden
+
+
+```{r}
+
+group.colors <- c("Low" = "#01796F", "Moderate" = "#FFD300", "Moderately high" = "#FC6600", "High"="#D30000")
+
+Burden<-plot_ly(data1, x= ~s_date, y=~BURD, color= ~BURD_CODE, type="bar") %>% 
+  layout(title = "COVID-19 burden in Chippewa County", xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+Burden
+```
+
+
+
+### Chart C
+
+
+```{r}
+
+traj<-plot_ly(data1, x= ~CUMUL_NEW, y=~POS_MSUM_NEW, type = 'scatter', mode = 'lines') 
+
+traj
+```
+
+
+
+Trajectory and rate
+===========================================================================================================
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Trajectory: log base 2 transformation
+
+```{r}
+traj<-plot_ly(data1, x= ~CUMUL_NEW, y=~POS_MSUM_NEW, type = 'scatter', mode = 'lines') %>% 
+  layout(title = "COVID-19 trajectory in Chippewa County",
+         xaxis = list(title = "log2(cumulative cases count)"),
+         yaxis = list (title = "log2(14-day moving new cumulative cases count)"))
+
+traj
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Chart B
+
+```{r}
+p<-ggplot(filter(data1,MONTH==06), aes(x=CUMUL_NEW, y=POS_MSUM_NEW))+geom_line(size=2)+theme_economist()
+
+ggplotly(p)
+```
+
+
+
+### Chart C
+
+
+```{r}
+q<-ggplot(filter(data1,MONTH==06), aes(x=CUMUL_NEW, y=POS_MSUM0_NEW))+geom_line(size=2)+theme_economist()
+
+ggplotly(q)
+```
+
+
+

@@ -1,0 +1,525 @@
+---
+title: "COVID-19 dashboard: Example of Chippewa County"
+author: "Komi Modji, MD|MPH|CPH"
+output: 
+  flexdashboard::flex_dashboard:
+   # social: [ "twitter", "facebook", "whatsapp","menu" ] this line is widening the nav bar which overlaps on the figure
+    orientation: rows          
+    vertical_layout: scroll
+    toc: true
+    toc_float: true
+
+# change orientation between rows and columns or leave it blank
+# resources: https://rmarkdown.rstudio.com/flexdashboard/
+# the following code adjust the navigation bar color and the second code after </style> prevents navigating bar to overlap the headers.
+---
+<style>                     
+.navbar {
+  background-color:#150258;
+  border-color:black;
+}
+.navbar-brand {
+color:white!important;
+}
+</style>
+
+div.textbox
+{
+    margin-top: 60px;
+}
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(lubridate)
+library(timetk)
+library(dplyr)
+library(roll)   # For rolling average with roll_mean()
+library(ggthemes)
+library(pracma)     # for moving average or upload moving average from parent folder.
+library(ggplot2)
+library(zoo)        # for rolling sum 
+library(gganimate)
+library(emmeans)
+library(plotly)
+library(dimple)
+library(DT)
+
+
+
+#https://p8105.com/plotly_and_dashboards.html#ggplotly
+
+datachip<-read.csv("C:/COVID-19/Chip_valley/Chippewa County/Chippewa_modeling/COVID-19_chip.csv",header=T, na.strings=c(""," ","NA","  "), stringsAsFactors=F )
+
+data1<- datachip %>% 
+  separate(LoadDttm,c("Date", "Time"), sep=" ",remove = F, extra="drop") %>% 
+  mutate(s_date=format(ymd(Date),"%m/%d")) %>% 
+  separate(s_date,c("MONTH", "DAY"), sep="/",remove = F, extra="drop") %>% 
+  mutate(POS_NEW=ifelse(POS_NEW==-1,0,.$POS_NEW)) %>%
+  mutate(POS_PERC=POS_NEW/TEST_NEW) %>% 
+  mutate(POS_PERC=round(POS_PERC,3)) %>% 
+  filter(!is.na(POS_NEW), POS_NEW>=0, TEST_NEW>=0) %>% 
+  mutate(POS_PERC_MEAN=movavg(POS_PERC,7, "s")) %>%       # Another way to compute moving average is to use function roll_mean instead of movavg()
+  mutate(POS_PERC_MEAN1=movavg(POS_PERC,7, "e")) %>% 
+  mutate(POS_NEW_MEAN=round(movavg(POS_NEW,7,"s"),0)) %>%   # Round the average to avoid dealing with decimal cases :)
+  mutate(POS_PERC_MEAN2=movavg(POS_PERC,14, "s")) %>% 
+  mutate(CUMUL=cumsum(POS_NEW)) %>% 
+  mutate(MONTH=as.numeric(MONTH)) %>% 
+  mutate(POS_MSUM0=rollsum(POS_NEW,7,fill=NA, align = "right")) %>% 
+  mutate(POS_MSUM=rollsum(POS_NEW,14,fill=NA, align = "right")) %>%
+  mutate(POS_MSUM_CODE=ifelse(POS_MSUM<=20, "Low",
+                              ifelse(POS_MSUM>20 & POS_MSUM<=35, "Moderate",
+                                     ifelse(POS_MSUM>35,"High",NA)))) %>% 
+  mutate(BURD=(POS_MSUM*100000)/64658) %>% 
+  mutate(BURD_CODE=ifelse(BURD<10,"Low",
+                          ifelse(BURD>=10 & BURD<50, "Moderate",
+                                 ifelse(BURD>=50&BURD<100,"Moderately high",
+                                        ifelse(BURD>=100,"High",NA))))) %>% 
+  # let try trajectory using log transformation 
+  mutate(POS_MSUM0_NEW=log(POS_MSUM0, base=2)) %>% 
+  mutate(POS_MSUM_NEW=log(POS_MSUM, base=2)) %>%
+  mutate(CUMUL_NEW=log(CUMUL, base=2))%>% 
+  mutate(POS_PERC_CODE=ifelse(POS_PERC_MEAN2<0.05,"Low",
+                          ifelse(POS_PERC_MEAN2>=0.05 & POS_PERC_MEAN2<=0.1, "Moderate",
+                                 ifelse(POS_PERC_MEAN2>0.1,"High",NA))))
+
+
+f <- list(
+  family = "Source Sans Pro",  #family = "Courier New, monospace",
+  size = 18,
+  color = "#7f7f7f")
+
+group.colors2 <- c("Low" = "#01796F", "Moderate" = "#FFD300",  "High"="#D30000")
+```
+
+
+Disclaimer and data source
+===============================================================================================================================
+
+<br>
+
+<br>
+**Disclaimer** <br> 
+All views expressed on this site are my own and do not represent the opinion of any entity whatsoever with which I have been, am now and will be affiliated. Assumptions made in this visualization are not reflective of the position of any entity other than the author(s) - and since we are critically-thinking individuals, these presentations are always subject to change, revision, updates and rethinking at any time. Please do not hold us to them in perpetuity. 
+<br>
+The author(s) of this site are not to be held responsible for misuse, reuse, recycled and cited and/or uncited copies of content within this site by others. 
+<br>
+<br>
+<br>
+**Table of contents** 
+<br>
+**[Cases and testing summary statistics]**
+<br>
+      a. COVID-19 cumulative cases
+<br>
+      b. Total daily testing
+<br>
+      c. Week day testing
+<br>
+      d. Negative testing
+<br>
+
+**[Positivity percent visualization]**
+<br>
+      a. Summary table
+<br>
+      b. Monthly positivity percent
+<br>
+      c. Daily positivity percent
+<br>
+
+**[More epidemiologic curves]**
+<br>
+      a. 14-day cumulative count
+<br>
+      b. Daily cumulative index
+<br>
+      c. Burden
+<br>
+
+**[Trajectory and rates]**
+<br>
+      a. Average contacts per case
+<br>
+      b. Positivity rate change
+<br>
+      c. Trajectory figure
+<br>
+      d. Previous month doubling time
+<br>
+      e. Current month doubling time
+<br>
+<br>
+**[Social behaviors]**
+<br>
+      a. Positivity percent statistics by week day
+<br>
+      b. Positive case statistics by week day
+<br>
+<br>
+<br>
+**Some definitions** 
+<br>
+**1. Positivity percent or percentage of positivity**: the proportion of positive tests relative to the total testing performed.
+<br>
+**2. Daily cumulative index (DCI)**: the average daily number of new cases of COVID-19 and calculated by cumulative cases/number of days between the first reported case.
+<br>
+**3. Cumulative count**: The sum of the cases since the first reported case
+<br>
+**4. Epidemiologic curve**: a visual display of the onset of illness among cases associated with an outbreak (CDC, NA).
+<br>
+**5. SEM**: Standard error of the mean
+
+<br>
+**Data source**
+<br>
+https://data.dhsgis.wi.gov/datasets/covid-19-historical-data-table/data
+
+
+**References**
+<br>
+Lai, C. C., Wang, C. Y., Wang, Y. H., & Hsueh, P. R. (2020). Global coronavirus disease 2019: What has daily cumulative index taught us?. International journal of antimicrobial agents, 55(6), 106001. https://doi.org/10.1016/j.ijantimicag.2020.106001 
+<br>
+https://www.cdc.gov/training/QuickLearns/createepi/1.html 
+
+
+Cases and testing summary statistics
+===============================================================================================================================
+
+
+Row
+---------------------------------------------------------------------------------------------------------------------
+<br>
+
+### Cumulative cases 
+
+```{r}
+
+Cases<-plot_ly(data1, x= ~s_date, y=~CUMUL+3, color= ~as.factor(MONTH), type="bar",
+               hoverinfo="text",
+               text=paste("Date:", data1$s_date,
+                       "<br>",
+                       " Total cumulative count:",data1$CUMUL+3)) %>% 
+  layout(title = "COVID-19 cumulative case count in Chippewa County",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f)) 
+
+# I adjusted the cumul by adding 3 to match the state data.
+Cases
+
+# Cases<-plot_ly(data1, x= ~s_date, y=~CUMUL, color= ~MONTH, type="bar")
+
+```
+
+
+Row
+------------------------------------------------------------------------------------------------------------------
+### Total daily testing
+
+```{r}
+Testing<-plot_ly(data1, x= ~s_date, y=~TEST_NEW, type="bar",
+                 hoverinfo="text",
+                 text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "Daily testing number:",data1$TEST_NEW)) %>% 
+  layout(title = "Daily COVID-19 testing in Chippewa County",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+Testing
+
+
+```
+
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Week day testing
+
+```{r,echo=FALSE}
+data1$WEEK_DAY<-factor(data1$WEEK_DAY, levels=c("Monday", "Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"))
+plot_ly(data1, y=~TEST_NEW, color= ~WEEK_DAY, type="box" )
+
+```
+
+
+
+### Negative testing count
+
+```{r}
+NegTesting<-plot_ly(data1, x= ~s_date, y=~NEG_NEW, type="bar",
+                 hoverinfo="text",
+                 text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "Daily negative cases count:",data1$NEG_NEW)) %>% 
+  layout(title = "Daily COVID-19 negative cases in Chippewa County",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+NegTesting
+
+
+```
+
+
+
+Positivity percent visualization
+===========================================================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Monthly COVID-19 positivity percent statistics from March 2019.
+
+```{r}
+Avg<-data1 %>% 
+  group_by(MONTH) %>% 
+  filter(!is.na(POS_PERC)) %>% 
+  summarize(Average=mean(POS_PERC), SEM=sd(POS_PERC), Median=median(POS_PERC), Minimum=min(POS_PERC), Maximum=max(POS_PERC), Death=sum(DTH_NEW), Total_test=sum(TEST_NEW)) %>% 
+  mutate(Average=scales::percent(Average),SEM=scales::percent(SEM), Median= scales::percent(Median), Minimum=scales::percent(Minimum), Maximum=scales::percent(Maximum)) %>% 
+  mutate(MONTH=recode(MONTH,"3"="March", "4"="April","5"="May","6"="June","7"="July")) %>% 
+  ungroup() 
+
+DT::datatable(Avg, options = list(
+  bPaginate = FALSE,
+  columnDefs = list(list(className = 'dt-left', targets = 0:8))
+))
+```
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Month of April positivity percent
+
+```{r}
+Apr<-ggplot(filter(data1, MONTH==04), aes(x=s_date, y=POS_PERC_MEAN2, fill=POS_PERC_CODE,text = paste(" Average positivity percent:",scales::percent(POS_PERC_MEAN2,accuracy = 0.1))))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+scale_fill_manual(values=group.colors2)+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14- day moving average of positivity percent", fill="Level")
+
+ggplotly(Apr,tooltip = "text")
+```
+
+
+
+### Month of May Positivity percent
+
+
+```{r}
+May<-ggplot(filter(data1, MONTH==05), aes(x=s_date, y=POS_PERC_MEAN2, fill=POS_PERC_CODE,text = paste(" Average positivity percent:",scales::percent(POS_PERC_MEAN2,accuracy = 0.1))))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+scale_fill_manual(values=group.colors2)+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14- day moving average of positivity percent", fill="Level")
+
+ggplotly(May,tooltip = "text")
+```
+
+
+
+### Month of June positvity percent
+
+```{r}
+Jun<-ggplot(filter(data1, MONTH==06), aes(x=s_date, y=POS_PERC_MEAN2, fill=POS_PERC_CODE,text = paste(" Average positivity percent:",scales::percent(POS_PERC_MEAN2,accuracy = 0.1))))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+scale_fill_manual(values=group.colors2)+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-day moving average of positivity percent", fill="Level")
+
+ggplotly(Jun,tooltip = "text")
+```
+
+### Month of July positvity percent
+
+```{r}
+Jul<-ggplot(filter(data1, MONTH==07), aes(x=s_date, y=POS_PERC_MEAN2, fill=POS_PERC_CODE,text = paste(" Average positivity percent:",scales::percent(POS_PERC_MEAN2,accuracy = 0.1))))+geom_bar(stat="identity")+theme_hc()+
+  coord_cartesian(ylim=c(0,0.08),clip = "off")+scale_fill_manual(values=group.colors2)+
+  scale_y_continuous(labels=scales::percent_format())+labs(x="Date", y="Positivity percent average", title="14-day moving average of positivity percent", fill="Level")
+
+ggplotly(Jul,tooltip = "text")
+```
+
+
+
+Row
+-----------------------------------------------------------------------
+
+### Daily positivity percent
+
+```{r}
+
+PP<-plot_ly(data1, x= ~s_date, y=~POS_PERC, type="bar",hoverinfo="text",
+            text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "Daily positivity percent:",data1$POS_PERC*100)) %>% 
+  layout(title = "Daily positivity percent",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f,tickformat = "%"))
+
+PP
+```
+
+
+
+More epidemiologic curves
+===========================================================================================================
+
+
+Row
+-----------------------------------------------------------------------
+
+### 14-daily cumulative count
+
+```{r}
+group.colors2 <- c("Low" = "#01796F", "Moderate" = "#FFD300",  "High"="#D30000")
+
+data_rs<-plot_ly(data1, x= ~s_date, y=~POS_MSUM, color= ~POS_MSUM_CODE, type="bar",hoverinfo="text",
+            text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "14-day cumulative count:",data1$POS_MSUM)) %>% 
+  layout(title = "14-day cumulative case count",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+data_rs
+```
+
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Daily cumulative index of COVID-19
+
+```{r}
+
+DCI_fig<-plot_ly(data1, x= ~s_date, y=~POS_MSUM/14, color= ~POS_MSUM_CODE, type="bar",hoverinfo="text",
+            text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "Daily cumulative index:",round(data1$POS_MSUM/14,1))) %>% 
+  layout(title = "Daily cumulative index",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+DCI_fig
+
+```
+
+
+
+### Burden
+
+
+```{r}
+
+Burden<-plot_ly(data1, x= ~s_date, y=~BURD, color= ~BURD_CODE, type="bar",hoverinfo="text",
+            text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "Burden:",round(data1$BURD,0))) %>% 
+  layout(title = "COVID-19 Burden",xaxis = list(title = "Date",titlefont = f),yaxis = list(title = "Count",titlefont = f))
+
+Burden
+```
+
+
+
+
+
+
+Trajectory and rates
+===========================================================================================================
+
+
+Row
+-----------------------------------------------------------------------
+
+### Contact per person
+
+```{r,echo=FALSE}
+valueBox(7, caption = "Contacts per case on average", icon="fa-users", color="#01796F")
+# could use icon="fa-thumbs-up"
+```
+
+
+
+
+### Positivity rate
+```{r,echo=FALSE}
+valueBox("66%", caption = "Positivity rate increase in the last 14-day period. \n significant increase*", icon="fa-thumbs-down", color="brown")
+```
+
+
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Trajectory: log base 2 transformation
+
+```{r}
+traj<-plot_ly(data1, x= ~CUMUL_NEW, y=~POS_MSUM_NEW, type = 'scatter', mode = 'lines',hoverinfo="text",
+            text=paste("Date:", data1$s_date,
+                       "<br>",
+                       "log2 of moving cumulative count:",round(data1$POS_MSUM_NEW,2))) %>% 
+  layout(title = "COVID-19 trajectory in Chippewa County",
+         xaxis = list(title = "log2(cumulative cases count)"),
+         yaxis = list (title = "log2(14-day moving cumulative cases count)"))
+
+traj
+
+## Work on this later...
+```
+
+Row
+-----------------------------------------------------------------------
+
+
+
+### Doubling time (June)
+```{r,echo=FALSE}
+# formula: dt<-(x*ln2))/(ln(y/z))
+dt<- (30*log(2))/(log(84/54))
+valueBox(round(dt,0), caption = "Days: Doubling time in June", icon="fa-thumbs-up", color="#01796F")
+```
+
+
+### Doubling time (July)
+```{r,echo=FALSE}
+# formula: dt<-(x*ln2))/(ln(y/z))
+dt<- (13*log(2))/(log(140/88))
+valueBox(round(dt,0), caption = "Days: Doubling time in July", icon="fa-thumbs-down", color="brown")
+```
+
+
+Social behaviors
+===========================================================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Positivity percent statistics by week day.
+
+```{r}
+WkPP<-data1 %>% 
+  group_by(WEEK_DAY) %>% 
+  filter(!is.na(POS_PERC)) %>% 
+  mutate(WEEK_DAY=factor(WEEK_DAY, levels=c("Monday", "Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"))) %>%
+  summarize(Average=mean(POS_PERC), SEM=sd(POS_PERC), Median=median(POS_PERC), Minimum=min(POS_PERC), Maximum=max(POS_PERC), Death=sum(DTH_NEW), Total_test=sum(TEST_NEW)) %>% 
+  mutate(Average=scales::percent(Average, accuracy = 0.1),SEM=scales::percent(SEM,accuracy = 0.1), Median= scales::percent(Median,accuracy = 0.1), Minimum=scales::percent(Minimum,accuracy = 0.1), Maximum=scales::percent(Maximum,accuracy = 0.1)) %>% 
+  ungroup() 
+
+DT::datatable(WkPP, options = list(
+  bPaginate = FALSE,
+  searching=FALSE,
+  dom = 't',
+  columnDefs = list(list(className = 'dt-left', targets = 0:8))
+))
+
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Positive case statistics by week day.
+
+```{r}
+WkPP<-data1 %>% 
+  group_by(WEEK_DAY) %>% 
+  filter(!is.na(POS_NEW)) %>% 
+  mutate(WEEK_DAY=factor(WEEK_DAY, levels=c("Monday", "Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"))) %>%
+  summarize(Average=round(mean(POS_NEW),0), SEM=round(sd(POS_NEW),0), Median=round(median(POS_NEW),0), Minimum=round(min(POS_NEW),0), Maximum=round(max(POS_NEW),0), Death=sum(DTH_NEW),
+            Total_test=sum(TEST_NEW)) %>% 
+  ungroup() 
+
+DT::datatable(WkPP, options = list(
+  bPaginate = FALSE,
+  searching=FALSE,
+  dom = 't',
+  columnDefs = list(list(className = 'dt-left', targets = 0:8))
+))
+
+
+```
